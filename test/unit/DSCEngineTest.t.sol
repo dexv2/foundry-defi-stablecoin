@@ -101,21 +101,67 @@ contract DSCEngineTest is Test {
         vm.stopPrank();
     }
 
-    modifier depositedCollateral() {
+    function _depositCollateral() private {
         vm.startPrank(USER);
         ERC20Mock(weth).approve(address(engine), AMOUNT_COLLATERAL);
         engine.depositCollateral(weth, AMOUNT_COLLATERAL);
         vm.stopPrank();
-        _;
     }
 
-    function testCanDepositCollateralAndGetAccountInfo() public depositedCollateral {
+    function _checkExpectedDscMintedAndCollateralDeposited(uint256 expectedTotalDscMinted) private {
         (uint256 totalDscMinted, uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
-
-        uint256 expectedTotalDscMinted = 0;
-        uint256 expectedAmountDeposited = engine.getTokenAmountFromUsd(weth, collateralValueInUsd);
+        uint256 expectedAmountCollateralDeposited = engine.getTokenAmountFromUsd(weth, collateralValueInUsd);
 
         assertEq(totalDscMinted, expectedTotalDscMinted);
-        assertEq(expectedAmountDeposited, AMOUNT_COLLATERAL);
+        assertEq(expectedAmountCollateralDeposited, AMOUNT_COLLATERAL);
+    }
+
+    function testCanDepositCollateralAndGetAccountInfo() public {
+        _depositCollateral();
+        uint256 expectedTotalDscMinted = 0;
+        _checkExpectedDscMintedAndCollateralDeposited(expectedTotalDscMinted);
+    }
+
+    function testAmountCollateralIsTransferedToDSCEngine() public {
+        uint256 startingEthBalance = ERC20Mock(weth).balanceOf(address(engine));
+        _depositCollateral();
+        uint256 endingEthBalance = ERC20Mock(weth).balanceOf(address(engine));
+        assertEq(endingEthBalance, startingEthBalance + AMOUNT_COLLATERAL);
+    }
+
+    function testCanMintDscAndGetAccountInfo() public {
+        _depositCollateral();
+
+        uint256 amountDscToMint = 2 ether;
+        vm.prank(USER);
+        engine.mintDsc(amountDscToMint);
+
+        _checkExpectedDscMintedAndCollateralDeposited(amountDscToMint);
+    }
+
+    function testRevertIfHealFactorIsBrokenNoDeposit() public {
+        uint256 amountDscToMint = 2 ether;
+        (, uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
+        vm.prank(USER);
+        uint256 healthFactor = engine.calculateHealthFactor(amountDscToMint, collateralValueInUsd);
+        vm.expectRevert(
+            abi.encodeWithSelector(DSCEngine.DSCEngine__BreaksHealthFactor.selector, healthFactor)
+        );
+        engine.mintDsc(amountDscToMint);
+    }
+
+    function testRevertIfHealFactorIsBrokenInMintingDsc() public {
+        _depositCollateral();
+        (, uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
+        vm.startPrank(USER);
+        // We are about to mint DSC with the same amount as collateral value
+        // which is below the 200% overcollateralization
+        uint256 amountDscToMint = collateralValueInUsd;
+        uint256 healthFactor = engine.calculateHealthFactor(amountDscToMint, collateralValueInUsd);
+        vm.expectRevert(
+            abi.encodeWithSelector(DSCEngine.DSCEngine__BreaksHealthFactor.selector, healthFactor)
+        );
+        engine.mintDsc(amountDscToMint);
+        vm.stopPrank();
     }
 }

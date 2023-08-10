@@ -278,10 +278,6 @@ contract DSCEngine is ReentrancyGuard {
         _revertIfHealFactorIsBroken(msg.sender);
     }
 
-    function getHealthFactor(address user) external view returns (uint256) {
-        return _healthFactor(user);
-    }
-
     ////////////////////////////////////
     // Private & Internal Functions   //
     ////////////////////////////////////
@@ -327,10 +323,18 @@ contract DSCEngine is ReentrancyGuard {
      * Returns how close to liquidation a user is
      * If a user goes below 1, they can get liquidated
      */
-    function _healthFactor(address user) private view returns (uint256) {
+    function _healthFactor(address user) private view returns (uint256 healthFactor) {
         // total DSC minted
         // total collateral VALUE
         (uint256 totalDscMinted, uint256 collateralValueInUsd) = _getAccountInformation(user);
+        return _calculateHealthFactor(totalDscMinted, collateralValueInUsd);
+    }
+
+    function _calculateHealthFactor(
+        uint256 totalDscMinted,
+        uint256 collateralValueInUsd
+    ) private pure returns (uint256) {
+        if (totalDscMinted == 0) { return type(uint256).max; }
 
         // $150 ETH / $100 DSC
         // collateralAdjustedForThreshold = $150 ETH * 50 / 100 = $75
@@ -391,5 +395,13 @@ contract DSCEngine is ReentrancyGuard {
 
     function getAccountInformation(address user) external view returns (uint256 totalDscMinted, uint256 collateralValueInUsd) {
         (totalDscMinted, collateralValueInUsd) = _getAccountInformation(user);
+    }
+
+    function getHealthFactor(address user) external view returns (uint256) {
+        return _healthFactor(user);
+    }
+
+    function calculateHealthFactor(uint256 totalDscMinted, uint256 collateralValueInUsd) public pure returns (uint256) {
+        return _calculateHealthFactor(totalDscMinted, collateralValueInUsd);
     }
 }
