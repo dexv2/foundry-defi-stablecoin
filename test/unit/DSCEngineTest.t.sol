@@ -8,6 +8,7 @@ import {HelperConfig} from "../../script/HelperConfig.s.sol";
 import {DSCEngine} from "../../src/DSCEngine.sol";
 import {DecentralizedStableCoin} from "../../src/DecentralizedStableCoin.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
+import {MockFailedTransferFrom} from "../mocks/MockFailedTransferFrom.sol";
 
 contract DSCEngineTest is Test {
     DeployDSC deployer;
@@ -101,11 +102,15 @@ contract DSCEngineTest is Test {
         vm.stopPrank();
     }
 
-    function _depositCollateral() private {
-        vm.startPrank(USER);
+    function _approveWethToDSCEngine() private {
+        vm.prank(USER);
         ERC20Mock(weth).approve(address(engine), AMOUNT_COLLATERAL);
+    }
+
+    function _depositCollateral() private {
+        _approveWethToDSCEngine();
+        vm.prank(USER);
         engine.depositCollateral(weth, AMOUNT_COLLATERAL);
-        vm.stopPrank();
     }
 
     function _checkExpectedDscMintedAndCollateralDeposited(uint256 expectedTotalDscMinted) private {
@@ -128,6 +133,25 @@ contract DSCEngineTest is Test {
         uint256 endingEthBalance = ERC20Mock(weth).balanceOf(address(engine));
         assertEq(endingEthBalance, startingEthBalance + AMOUNT_COLLATERAL);
     }
+
+    function testRevertsDepositWithZeroCollateralAllowance() public {
+        vm.startPrank(USER);
+        MockFailedTransferFrom mockDsc = new MockFailedTransferFrom();
+        tokenAddresses = [address(mockDsc)];
+        priceFeedAddresses = [ethUsdPriceFeed];
+        DSCEngine mockEngine = new DSCEngine(tokenAddresses, priceFeedAddresses, address(mockDsc));
+        mockDsc.mint(USER, AMOUNT_COLLATERAL);
+        mockDsc.transferOwnership(address(mockEngine));
+    
+        mockDsc.approve(address(mockEngine), AMOUNT_COLLATERAL);
+        vm.expectRevert(DSCEngine.DSCEngine__TransferFailed.selector);
+        mockEngine.depositCollateral(address(mockDsc), AMOUNT_COLLATERAL);
+        vm.stopPrank();
+    }
+
+    ////////////////////////
+    // mintDsc Tests      //
+    ////////////////////////
 
     function testCanMintDscAndGetAccountInfo() public {
         _depositCollateral();
@@ -177,17 +201,23 @@ contract DSCEngineTest is Test {
 
         assertEq(dscBalance, totalDscMinted);
     }
+
+    ////////////////////////////////////////////
+    // depositCollateralAndMintDsc Tests      //
+    ////////////////////////////////////////////
+
+    function testCanDepositCollateralAndMintDsc() public {
+        _approveWethToDSCEngine();
+        // 2e18 is way below the 10e18 amount collateral
+        // which passes the 200% overcollateralization
+        uint256 amountDscToMint = 2e18;
+        vm.prank(USER);
+        engine.depositCollateralAndMintDsc(weth, AMOUNT_COLLATERAL, amountDscToMint);
+        _checkExpectedDscMintedAndCollateralDeposited(amountDscToMint);
+    }
 }
 
 
-// - Function "depositCollateralAndMintDsc" (location: source ID 29, line 134, chars 4787-5056, hits: 0)
-// - Line (location: source ID 29, line 139, chars 4956-5015, hits: 0)
-// - Statement (location: source ID 29, line 139, chars 4956-5015, hits: 0)
-// - Line (location: source ID 29, line 140, chars 5025-5049, hits: 0)
-// - Statement (location: source ID 29, line 140, chars 5025-5049, hits: 0)
-// - Branch (branch: 0, path: 0) (location: source ID 29, line 160, chars 5790-5863, hits: 0)
-// - Line (location: source ID 29, line 161, chars 5818-5852, hits: 0)
-// - Statement (location: source ID 29, line 161, chars 5818-5852, hits: 0)
 // - Function "redeemCollateralForDsc" (location: source ID 29, line 171, chars 6175-6495, hits: 0)
 // - Line (location: source ID 29, line 176, chars 6339-6363, hits: 0)
 // - Statement (location: source ID 29, line 176, chars 6339-6363, hits: 0)
