@@ -108,6 +108,11 @@ contract DSCEngineTest is Test {
         ERC20Mock(weth).approve(address(engine), AMOUNT_COLLATERAL);
     }
 
+    function _approveDscToDSCEngine() private {
+        vm.prank(USER);
+        dsc.approve(address(engine), SAFE_DSC_AMOUNT_TO_MINT);
+    }
+
     function _depositCollateral() private {
         _approveWethToDSCEngine();
         vm.prank(USER);
@@ -135,7 +140,7 @@ contract DSCEngineTest is Test {
         assertEq(endingEthBalance, startingEthBalance + AMOUNT_COLLATERAL);
     }
 
-    function testRevertsDepositWithZeroCollateralAllowance() public {
+    function testRevertsDepositWithTransferFailed() public {
         vm.startPrank(USER);
         MockFailedTransferFrom mockDsc = new MockFailedTransferFrom();
         tokenAddresses = [address(mockDsc)];
@@ -247,6 +252,36 @@ contract DSCEngineTest is Test {
         );
         vm.prank(USER);
         engine.redeemCollateral(weth, ethAmountToRedeem);
+    }
+
+    ////////////////////////
+    // burnDsc Tests      //
+    ////////////////////////
+
+    function testCanBurnDscAndUpdateAccountDscMinted() public depositAndMint {
+        uint256 oneFourthOfMintedDscToBurn = SAFE_DSC_AMOUNT_TO_MINT / 4;
+        uint256 amountDscAfter = SAFE_DSC_AMOUNT_TO_MINT - oneFourthOfMintedDscToBurn;
+        _approveDscToDSCEngine();
+        vm.prank(USER);
+        engine.burnDsc(oneFourthOfMintedDscToBurn);
+
+        (uint256 totalDscMinted,) = engine.getAccountInformation(USER);
+
+        assertEq(totalDscMinted, amountDscAfter);
+    }
+
+    function testRevertsIfBurnAmountIsZero() public depositAndMint {
+        vm.prank(USER);
+        vm.expectRevert();
+        engine.burnDsc(0);
+    }
+
+    function testCantBurnMoreThanUserHave() public depositAndMint {
+        _approveDscToDSCEngine();
+        vm.startPrank(USER);
+        vm.expectRevert();
+        engine.burnDsc(SAFE_DSC_AMOUNT_TO_MINT + 1);
+        vm.stopPrank();
     }
 }
 
