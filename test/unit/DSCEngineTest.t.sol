@@ -23,6 +23,7 @@ contract DSCEngineTest is Test {
     address public USER = makeAddr("user");
     uint256 public constant AMOUNT_COLLATERAL = 10e18;
     uint256 public constant STARTING_WETH_BALANCE = 10e18;
+    uint256 public constant SAFE_DSC_AMOUNT_TO_MINT = 1000e18; // (10e18 * $2000) / 1000e18 = 2 --> 2000% overcollateralize
 
     function setUp() public {
         deployer = new DeployDSC();
@@ -165,7 +166,7 @@ contract DSCEngineTest is Test {
 
     function testRevertIfHealFactorIsBrokenNoDeposit() public {
         uint256 amountDscToMint = 2e18;
-        (, uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
+        uint256 collateralValueInUsd = engine.getAccountCollateralValue(USER);
         vm.prank(USER);
         uint256 healthFactor = engine.calculateHealthFactor(amountDscToMint, collateralValueInUsd);
         vm.expectRevert(
@@ -176,7 +177,7 @@ contract DSCEngineTest is Test {
 
     function testRevertIfHealFactorIsBrokenInMintingDscBelowTwoHundredPercentOvercollateralization() public {
         _depositCollateral();
-        (, uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
+        uint256 collateralValueInUsd = engine.getAccountCollateralValue(USER);
         vm.startPrank(USER);
         // We are about to mint DSC with the same amount as collateral value
         // which is below the 200% overcollateralization
@@ -191,9 +192,8 @@ contract DSCEngineTest is Test {
 
     function testDscBalanceMintedEqualsAccountInformationDscMinted() public {
         _depositCollateral();
-        // 2e18 is way below the 10e18 amount collateral
-        // which passes the 200% overcollateralization
-        uint256 amountDscToMint = 2e18;
+        // (10e18 * $2000) / 10000e18 = 2 --> 200% overcollateralize
+        uint256 amountDscToMint = 10000e18;
         vm.prank(USER);
         engine.mintDsc(amountDscToMint);
         (uint256 totalDscMinted,) = engine.getAccountInformation(USER);
@@ -206,14 +206,47 @@ contract DSCEngineTest is Test {
     // depositCollateralAndMintDsc Tests      //
     ////////////////////////////////////////////
 
-    function testCanDepositCollateralAndMintDsc() public {
+    modifier depositAndMint() {
         _approveWethToDSCEngine();
-        // 2e18 is way below the 10e18 amount collateral
-        // which passes the 200% overcollateralization
-        uint256 amountDscToMint = 2e18;
         vm.prank(USER);
-        engine.depositCollateralAndMintDsc(weth, AMOUNT_COLLATERAL, amountDscToMint);
-        _checkExpectedDscMintedAndCollateralDeposited(amountDscToMint);
+        engine.depositCollateralAndMintDsc(weth, AMOUNT_COLLATERAL, SAFE_DSC_AMOUNT_TO_MINT);
+        _;
+    }
+
+    function testCanDepositCollateralAndMintDscInASingleTransaction() public depositAndMint {
+        _checkExpectedDscMintedAndCollateralDeposited(SAFE_DSC_AMOUNT_TO_MINT);
+    }
+
+    /////////////////////////////////
+    // redeemCollateral Tests      //
+    /////////////////////////////////
+
+    function testCanRedeemCollateralAndUpdateAccountCollateralValue() public depositAndMint {
+        uint256 maxEthAmountCanBeRedeemed = 9e18; // 9 ETH
+        vm.prank(USER);
+        // health factor will be exactly 1e18
+        // collateral value in USD will be 200% the minted DSC (SAFE_DSC_AMOUNT_TO_MINT)
+        // $1000 * 2 = $2000
+        engine.redeemCollateral(weth, maxEthAmountCanBeRedeemed);
+
+        uint256 expectedCollateralValueInUsd = 2000e18; // $2000
+        uint256 actualCollateralValueInUsd = engine.getAccountCollateralValue(USER);
+
+        assertEq(expectedCollateralValueInUsd, actualCollateralValueInUsd);
+    }
+
+    function testRevertIfUserRedeemsAndBreaksHealthFactor() public depositAndMint {
+        uint256 ethAmountToRedeem = 91e17; // 9.1 ETH, exceeds max eth that can be redeemed
+        // health factor will be below 1e18
+        // collateral value in USD will be less than 200% the minted DSC (SAFE_DSC_AMOUNT_TO_MINT)
+        uint256 collateralValueInEthAfterTransaction = AMOUNT_COLLATERAL - ethAmountToRedeem;
+        uint256 collateralValueInUsdAfterTransaction = engine.getUsdValue(weth, collateralValueInEthAfterTransaction);
+        uint256 healthFactor = engine.calculateHealthFactor(SAFE_DSC_AMOUNT_TO_MINT, collateralValueInUsdAfterTransaction);
+        vm.expectRevert(
+            abi.encodeWithSelector(DSCEngine.DSCEngine__BreaksHealthFactor.selector, healthFactor)
+        );
+        vm.prank(USER);
+        engine.redeemCollateral(weth, ethAmountToRedeem);
     }
 }
 
@@ -223,14 +256,10 @@ contract DSCEngineTest is Test {
 // - Statement (location: source ID 29, line 176, chars 6339-6363, hits: 0)
 // - Line (location: source ID 29, line 177, chars 6373-6431, hits: 0)
 // - Statement (location: source ID 29, line 177, chars 6373-6431, hits: 0)
-// - Function "redeemCollateral" (location: source ID 29, line 185, chars 6677-7011, hits: 0)
-// - Line (location: source ID 29, line 193, chars 6872-6955, hits: 0)
-// - Statement (location: source ID 29, line 193, chars 6872-6955, hits: 0)
-// - Line (location: source ID 29, line 194, chars 6965-7004, hits: 0)
-// - Statement (location: source ID 29, line 194, chars 6965-7004, hits: 0)
 // - Branch (branch: 1, path: 0) (location: source ID 29, line 207, chars 7538-7606, hits: 0)
 // - Line (location: source ID 29, line 208, chars 7565-7595, hits: 0)
 // - Statement (location: source ID 29, line 208, chars 7565-7595, hits: 0)
+
 // - Function "burnDsc" (location: source ID 29, line 213, chars 7675-7892, hits: 0)
 // - Line (location: source ID 29, line 214, chars 7759-7799, hits: 0)
 // - Statement (location: source ID 29, line 214, chars 7759-7799, hits: 0)
