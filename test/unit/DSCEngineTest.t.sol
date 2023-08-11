@@ -298,6 +298,21 @@ contract DSCEngineTest is Test {
         assertEq(totalDscMinted, 0);
         assertEq(collateralValueInUsd, 0);
     }
+
+    ////////////////////////////////
+    // getHealthFactor Tests      //
+    ////////////////////////////////
+
+    function testCanReturnAccurateHealthFactor() public depositAndMint {
+        // collateralValueInUsd: 10 * $2000 ETH = $20000 ETH
+        // totalDscMinted: $1000 DSC
+        // collateralAdjustedForThreshold = $20000 ETH * 50 / 100 = $10000
+        // healthFactor: $10000 / $1000 = 10
+        uint256 healthFactor = engine.getHealthFactor(USER);
+        uint256 expectedHealthFactor = 10e18;
+
+        assertEq(healthFactor, expectedHealthFactor);
+    }
 }
 
 
