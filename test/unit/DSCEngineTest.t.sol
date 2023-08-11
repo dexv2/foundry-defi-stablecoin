@@ -9,6 +9,8 @@ import {DSCEngine} from "../../src/DSCEngine.sol";
 import {DecentralizedStableCoin} from "../../src/DecentralizedStableCoin.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {MockFailedTransferFrom} from "../mocks/MockFailedTransferFrom.sol";
+import {MockFailedTransfer} from "../mocks/MockFailedTransfer.sol";
+import {MockV3Aggregator} from "../mocks/MockV3Aggregator.sol";
 
 contract DSCEngineTest is Test {
     DeployDSC deployer;
@@ -21,9 +23,13 @@ contract DSCEngineTest is Test {
     address wbtc;
 
     address public USER = makeAddr("user");
+    address public BAD_USER = makeAddr("badUser");
     uint256 public constant AMOUNT_COLLATERAL = 10e18;
     uint256 public constant STARTING_WETH_BALANCE = 10e18;
     uint256 public constant SAFE_DSC_AMOUNT_TO_MINT = 1000e18; // (10e18 * $2000) / 1000e18 = 2 --> 2000% overcollateralize
+    int256 public constant ETH_ORIGINAL_PRICE = 2000e8;
+    int256 public constant ETH_DUMPED_PRICE = 1000e8;
+    uint256 public constant DSC_TO_MINT_OR_MINTED_BY_BAD_USER = 100e18;
 
     function setUp() public {
         deployer = new DeployDSC();
@@ -31,6 +37,7 @@ contract DSCEngineTest is Test {
         (ethUsdPriceFeed, btcUsdPriceFeed, weth, wbtc,) = config.activeNetworkConfig();
 
         ERC20Mock(weth).mint(USER, STARTING_WETH_BALANCE);
+        ERC20Mock(weth).mint(BAD_USER, STARTING_WETH_BALANCE);
     }
 
     ////////////////////////////
@@ -288,6 +295,34 @@ contract DSCEngineTest is Test {
     // redeemCollateralForDsc Tests      //
     ///////////////////////////////////////
 
+    // this test needs it's own setup
+    function testRevertsIfTransferFails() public {
+        // Arrange - Setup
+        address owner = msg.sender;
+        vm.prank(owner);
+        MockFailedTransfer mockDsc = new MockFailedTransfer();
+        tokenAddresses = [address(mockDsc)];
+        priceFeedAddresses = [ethUsdPriceFeed];
+        vm.prank(owner);
+        DSCEngine mockDsce = new DSCEngine(
+            tokenAddresses,
+            priceFeedAddresses,
+            address(mockDsc)
+        );
+        mockDsc.mint(USER, AMOUNT_COLLATERAL);
+
+        vm.prank(owner);
+        mockDsc.transferOwnership(address(mockDsce));
+        // Arrange - User
+        vm.startPrank(USER);
+        ERC20Mock(address(mockDsc)).approve(address(mockDsce), AMOUNT_COLLATERAL);
+        // Act / Assert
+        mockDsce.depositCollateral(address(mockDsc), AMOUNT_COLLATERAL);
+        vm.expectRevert(DSCEngine.DSCEngine__TransferFailed.selector);
+        mockDsce.redeemCollateral(address(mockDsc), AMOUNT_COLLATERAL);
+        vm.stopPrank();
+    }
+
     function testCanRedeemCollateralAndBurnDscInOneTransaction() public depositAndMint {
         _approveDscToDSCEngine();
         vm.prank(USER);
@@ -313,62 +348,88 @@ contract DSCEngineTest is Test {
 
         assertEq(healthFactor, expectedHealthFactor);
     }
+
+    //////////////////////////
+    // liquidate Tests      //
+    //////////////////////////
+
+    modifier depositAndMintByBadUser() {
+        // initial ETH value: $2000 / ETH 
+        // initial collateral value: $280 ETH
+        // minted dsc: $100 DSC
+        // more than 200% overcollateral
+        vm.startPrank(BAD_USER);
+        ERC20Mock(weth).approve(address(engine), AMOUNT_COLLATERAL);
+        uint256 collateralToDepositInUsd = 280e18;
+        uint256 collateralToDepositInEth = engine.getTokenAmountFromUsd(weth, collateralToDepositInUsd);
+        engine.depositCollateralAndMintDsc(weth, collateralToDepositInEth, DSC_TO_MINT_OR_MINTED_BY_BAD_USER);
+        vm.stopPrank();
+        _;
+    }
+
+    function testCanLiquidateUserWithBadHealthFactor() public depositAndMint depositAndMintByBadUser {
+        // ETH got dumped to value: $1000 / ETH
+        // updated collateral value would be: $140 ETH
+        // minted dsc: $100 DSC
+        // less than 200% overcollateral
+        // USER can liquidate BAD_USER
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(ETH_DUMPED_PRICE);
+        uint256 startingUserEthBalanceInUsd = engine.getUsdValue(weth, ERC20Mock(weth).balanceOf(USER));
+        uint256 startingUserDscBalance = dsc.balanceOf(USER);
+        (uint256 startingBadUserDscMinted, uint256 startingBadUserCollateralValueInUsd) = engine.getAccountInformation(BAD_USER);
+        vm.startPrank(USER);
+        dsc.approve(address(engine), DSC_TO_MINT_OR_MINTED_BY_BAD_USER);
+        engine.liquidate(weth, BAD_USER, DSC_TO_MINT_OR_MINTED_BY_BAD_USER);
+        vm.stopPrank();
+        uint256 endingUserEthBalanceInUsd = engine.getUsdValue(weth, ERC20Mock(weth).balanceOf(USER));
+        uint256 endingUserDscBalance = dsc.balanceOf(USER);
+        (uint256 endingBadUserDscMinted, uint256 endingBadUserCollateralValueInUsd) = engine.getAccountInformation(BAD_USER);
+
+        // USER is rewarded 10% bonus
+        // The USER should get $110 ETH after covering $100 DSC on behalf of BAD_USER
+        // The USER should have $110 worth of ETH BALANCE 
+        uint256 userCollateralAmountGain = 110e18;
+        uint256 userDscCovered = DSC_TO_MINT_OR_MINTED_BY_BAD_USER;
+
+        assertEq(endingUserEthBalanceInUsd, startingUserEthBalanceInUsd + userCollateralAmountGain);
+        assertEq(endingUserDscBalance, startingUserDscBalance - userDscCovered);
+        assertEq(endingBadUserDscMinted, startingBadUserDscMinted - DSC_TO_MINT_OR_MINTED_BY_BAD_USER);
+        assertEq(endingBadUserCollateralValueInUsd, startingBadUserCollateralValueInUsd - userCollateralAmountGain);
+
+        // Return ETH value to original
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(ETH_ORIGINAL_PRICE);
+    }
+
+    function testRevertsIfUserLiquidatesAnotherUserWithGoodHealthFactor() public depositAndMint depositAndMintByBadUser {
+        // Bad user has $280 ETH and minted $100 DSC
+        // Has more than 200% overcollateral
+        // Has good health factor
+        vm.startPrank(USER);
+        dsc.approve(address(engine), DSC_TO_MINT_OR_MINTED_BY_BAD_USER);
+        vm.expectRevert(DSCEngine.DSCEngine__HealthFactorOk.selector);
+        engine.liquidate(weth, BAD_USER, DSC_TO_MINT_OR_MINTED_BY_BAD_USER);
+        vm.stopPrank();
+    }
+
+    function testRevertsIfHealthFactorNotImprovedAfterLiquidation() public depositAndMint depositAndMintByBadUser {
+        // ETH got dumped to value: $18 / ETH
+        // updated collateral value would be: $2.52 ETH
+        // minted dsc: $100 DSC
+        // way way undercollateral!!
+        // USER can liquidate BAD_USER
+        int256 ethUsdUpdatedPrice = 18e8;
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(ethUsdUpdatedPrice);
+
+        // User is already undercollateralize, it's too late to liquidate
+        // Liquidating will make user's health factor worse
+        uint256 amountDscToCover = 1e18;
+        vm.startPrank(USER);
+        dsc.approve(address(engine), amountDscToCover);
+        vm.expectRevert(DSCEngine.DSCEngine__HealthFactorNotImproved.selector);
+        engine.liquidate(weth, BAD_USER, amountDscToCover);
+        vm.stopPrank();
+
+        // Return ETH value to original
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(ETH_ORIGINAL_PRICE);
+    }
 }
-
-
-// - Function "redeemCollateralForDsc" (location: source ID 29, line 171, chars 6175-6495, hits: 0)
-// - Line (location: source ID 29, line 176, chars 6339-6363, hits: 0)
-// - Statement (location: source ID 29, line 176, chars 6339-6363, hits: 0)
-// - Line (location: source ID 29, line 177, chars 6373-6431, hits: 0)
-// - Statement (location: source ID 29, line 177, chars 6373-6431, hits: 0)
-// - Branch (branch: 1, path: 0) (location: source ID 29, line 207, chars 7538-7606, hits: 0)
-// - Line (location: source ID 29, line 208, chars 7565-7595, hits: 0)
-// - Statement (location: source ID 29, line 208, chars 7565-7595, hits: 0)
-// - Function "liquidate" (location: source ID 29, line 240, chars 8993-10632, hits: 0)
-// - Line (location: source ID 29, line 250, chars 9222-9276, hits: 0)
-// - Statement (location: source ID 29, line 250, chars 9222-9276, hits: 0)
-// - Statement (location: source ID 29, line 250, chars 9257-9276, hits: 0)
-// - Line (location: source ID 29, line 251, chars 9290-9335, hits: 0)
-// - Statement (location: source ID 29, line 251, chars 9290-9335, hits: 0)
-// - Branch (branch: 2, path: 0) (location: source ID 29, line 251, chars 9286-9396, hits: 0)
-// - Branch (branch: 2, path: 1) (location: source ID 29, line 251, chars 9286-9396, hits: 0)
-// - Line (location: source ID 29, line 252, chars 9351-9385, hits: 0)
-// - Statement (location: source ID 29, line 252, chars 9351-9385, hits: 0)
-// - Line (location: source ID 29, line 260, chars 9609-9692, hits: 0)
-// - Statement (location: source ID 29, line 260, chars 9609-9692, hits: 0)
-// - Statement (location: source ID 29, line 260, chars 9646-9692, hits: 0)
-// - Line (location: source ID 29, line 268, chars 10032-10130, hits: 0)
-// - Statement (location: source ID 29, line 268, chars 10032-10130, hits: 0)
-// - Statement (location: source ID 29, line 268, chars 10058-10130, hits: 0)
-// - Line (location: source ID 29, line 269, chars 10140-10218, hits: 0)
-// - Statement (location: source ID 29, line 269, chars 10140-10218, hits: 0)
-// - Statement (location: source ID 29, line 269, chars 10174-10218, hits: 0)
-// - Line (location: source ID 29, line 270, chars 10228-10300, hits: 0)
-// - Statement (location: source ID 29, line 270, chars 10228-10300, hits: 0)
-// - Line (location: source ID 29, line 272, chars 10341-10380, hits: 0)
-// - Statement (location: source ID 29, line 272, chars 10341-10380, hits: 0)
-// - Line (location: source ID 29, line 274, chars 10391-10443, hits: 0)
-// - Statement (location: source ID 29, line 274, chars 10391-10443, hits: 0)
-// - Statement (location: source ID 29, line 274, chars 10424-10443, hits: 0)
-// - Line (location: source ID 29, line 275, chars 10457-10507, hits: 0)
-// - Statement (location: source ID 29, line 275, chars 10457-10507, hits: 0)
-// - Branch (branch: 3, path: 0) (location: source ID 29, line 275, chars 10453-10577, hits: 0)
-// - Branch (branch: 3, path: 1) (location: source ID 29, line 275, chars 10453-10577, hits: 0)
-// - Line (location: source ID 29, line 276, chars 10523-10566, hits: 0)
-// - Statement (location: source ID 29, line 276, chars 10523-10566, hits: 0)
-// - Line (location: source ID 29, line 278, chars 10586-10625, hits: 0)
-// - Statement (location: source ID 29, line 278, chars 10586-10625, hits: 0)
-// - Branch (branch: 4, path: 0) (location: source ID 29, line 292, chars 11147-11220, hits: 0)
-// - Line (location: source ID 29, line 293, chars 11175-11209, hits: 0)
-// - Statement (location: source ID 29, line 293, chars 11175-11209, hits: 0)
-// - Branch (branch: 5, path: 0) (location: source ID 29, line 308, chars 11729-11802, hits: 0)
-// - Line (location: source ID 29, line 309, chars 11757-11791, hits: 0)
-// - Statement (location: source ID 29, line 309, chars 11757-11791, hits: 0)
-// - Branch (branch: 6, path: 0) (location: source ID 29, line 337, chars 12794-12848, hits: 0)
-// - Statement (location: source ID 29, line 337, chars 12821-12845, hits: 0)
-// - Line (location: source ID 29, line 385, chars 14950-14982, hits: 0)
-// - Statement (location: source ID 29, line 385, chars 14950-14982, hits: 0)
-// - Function "getHealthFactor" (location: source ID 29, line 400, chars 15613-15727, hits: 0)
-// - Line (location: source ID 29, line 401, chars 15694-15720, hits: 0)
-// - Statement (location: source ID 29, line 401, chars 15694-15720, hits: 0)
-// - Statement (location: source ID 29, line 401, chars 15701-15720, hits: 0)

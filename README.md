@@ -6,3 +6,6 @@
 3. Collateral: Exogenous (Crypto)
    1. wETH
    2. wBTC
+
+New:
+1. Fuzz (Invariant) Testing
