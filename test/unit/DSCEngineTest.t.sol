@@ -283,6 +283,21 @@ contract DSCEngineTest is Test {
         engine.burnDsc(SAFE_DSC_AMOUNT_TO_MINT + 1);
         vm.stopPrank();
     }
+
+    ///////////////////////////////////////
+    // redeemCollateralForDsc Tests      //
+    ///////////////////////////////////////
+
+    function testCanRedeemCollateralAndBurnDscInOneTransaction() public depositAndMint {
+        _approveDscToDSCEngine();
+        vm.prank(USER);
+        engine.redeemCollateralForDsc(weth, AMOUNT_COLLATERAL, SAFE_DSC_AMOUNT_TO_MINT);
+
+        (uint256 totalDscMinted, uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
+
+        assertEq(totalDscMinted, 0);
+        assertEq(collateralValueInUsd, 0);
+    }
 }
 
 
@@ -294,12 +309,6 @@ contract DSCEngineTest is Test {
 // - Branch (branch: 1, path: 0) (location: source ID 29, line 207, chars 7538-7606, hits: 0)
 // - Line (location: source ID 29, line 208, chars 7565-7595, hits: 0)
 // - Statement (location: source ID 29, line 208, chars 7565-7595, hits: 0)
-
-// - Function "burnDsc" (location: source ID 29, line 213, chars 7675-7892, hits: 0)
-// - Line (location: source ID 29, line 214, chars 7759-7799, hits: 0)
-// - Statement (location: source ID 29, line 214, chars 7759-7799, hits: 0)
-// - Line (location: source ID 29, line 215, chars 7809-7848, hits: 0)
-// - Statement (location: source ID 29, line 215, chars 7809-7848, hits: 0)
 // - Function "liquidate" (location: source ID 29, line 240, chars 8993-10632, hits: 0)
 // - Line (location: source ID 29, line 250, chars 9222-9276, hits: 0)
 // - Statement (location: source ID 29, line 250, chars 9222-9276, hits: 0)
@@ -334,37 +343,14 @@ contract DSCEngineTest is Test {
 // - Statement (location: source ID 29, line 276, chars 10523-10566, hits: 0)
 // - Line (location: source ID 29, line 278, chars 10586-10625, hits: 0)
 // - Statement (location: source ID 29, line 278, chars 10586-10625, hits: 0)
-// - Function "_burnDsc" (location: source ID 29, line 289, chars 10913-11263, hits: 0)
-// - Line (location: source ID 29, line 290, chars 11011-11053, hits: 0)
-// - Statement (location: source ID 29, line 290, chars 11011-11053, hits: 0)
-// - Line (location: source ID 29, line 291, chars 11063-11137, hits: 0)
-// - Statement (location: source ID 29, line 291, chars 11063-11137, hits: 0)
-// - Statement (location: source ID 29, line 291, chars 11078-11137, hits: 0)
-// - Line (location: source ID 29, line 292, chars 11151-11159, hits: 0)
-// - Statement (location: source ID 29, line 292, chars 11151-11159, hits: 0)
 // - Branch (branch: 4, path: 0) (location: source ID 29, line 292, chars 11147-11220, hits: 0)
-// - Branch (branch: 4, path: 1) (location: source ID 29, line 292, chars 11147-11220, hits: 0)
 // - Line (location: source ID 29, line 293, chars 11175-11209, hits: 0)
 // - Statement (location: source ID 29, line 293, chars 11175-11209, hits: 0)
-// - Line (location: source ID 29, line 295, chars 11229-11256, hits: 0)
-// - Statement (location: source ID 29, line 295, chars 11229-11256, hits: 0)
-// - Function "_redeemCollateral" (location: source ID 29, line 298, chars 11269-11808, hits: 0)
-// - Line (location: source ID 29, line 304, chars 11436-11507, hits: 0)
-// - Statement (location: source ID 29, line 304, chars 11436-11507, hits: 0)
-// - Line (location: source ID 29, line 305, chars 11517-11592, hits: 0)
-// - Statement (location: source ID 29, line 305, chars 11517-11592, hits: 0)
-// - Line (location: source ID 29, line 307, chars 11643-11719, hits: 0)
-// - Statement (location: source ID 29, line 307, chars 11643-11719, hits: 0)
-// - Statement (location: source ID 29, line 307, chars 11658-11719, hits: 0)
-// - Line (location: source ID 29, line 308, chars 11733-11741, hits: 0)
-// - Statement (location: source ID 29, line 308, chars 11733-11741, hits: 0)
 // - Branch (branch: 5, path: 0) (location: source ID 29, line 308, chars 11729-11802, hits: 0)
-// - Branch (branch: 5, path: 1) (location: source ID 29, line 308, chars 11729-11802, hits: 0)
 // - Line (location: source ID 29, line 309, chars 11757-11791, hits: 0)
 // - Statement (location: source ID 29, line 309, chars 11757-11791, hits: 0)
 // - Branch (branch: 6, path: 0) (location: source ID 29, line 337, chars 12794-12848, hits: 0)
 // - Statement (location: source ID 29, line 337, chars 12821-12845, hits: 0)
-// - Function "getAccountCollateralValue" (location: source ID 29, line 377, chars 14437-14989, hits: 0)
 // - Line (location: source ID 29, line 385, chars 14950-14982, hits: 0)
 // - Statement (location: source ID 29, line 385, chars 14950-14982, hits: 0)
 // - Function "getHealthFactor" (location: source ID 29, line 400, chars 15613-15727, hits: 0)
