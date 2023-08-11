@@ -9,3 +9,7 @@
 
 New:
 1. Fuzz (Invariant) Testing
+
+1. Some proper oracle use ✅
+2. Write more tests
+3. Smart Contract Audit Preparation
