@@ -432,4 +432,9 @@ contract DSCEngineTest is Test {
         // Return ETH value to original
         MockV3Aggregator(ethUsdPriceFeed).updateAnswer(ETH_ORIGINAL_PRICE);
     }
+
+    function testGetDsc() public {
+        address dscAddress = engine.getDsc();
+        assertEq(dscAddress, address(dsc));
+    }
 }

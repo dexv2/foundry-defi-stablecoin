@@ -67,7 +67,7 @@ contract Handler is Test {
         uint256 maxCollateralToRedeem = engine.getCollateralBalanceOfUser(msg.sender, address(collateral));
         amountCollateral = bound(amountCollateral, 0, maxCollateralToRedeem);
 
-        if (amountCollateral == 0) { return; }
+        if (amountCollateral == 0) {return;}
 
         vm.startPrank(msg.sender);
         engine.redeemCollateral(address(collateral), amountCollateral);
